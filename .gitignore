@@ -4,3 +4,5 @@ dist
 .DS_Store
 .vscode
 .idea
+pnpm-lock.yaml
+pnpm-workspace.yaml
