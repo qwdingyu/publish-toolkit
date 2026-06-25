@@ -43,7 +43,6 @@ jobs:
         run: |
           node --version
           npm --version
-          pnpm --version
 
       - name: Install dependencies
         run: npm install
