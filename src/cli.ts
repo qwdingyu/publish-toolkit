@@ -17,12 +17,15 @@ import { readFileSync } from "node:fs";
 import { PublishToolkit } from "./publish/publisher.js";
 import { Obfuscator, ObfuscateLevel, ObfuscateOptions } from "./obfuscate/obfuscator.js";
 
+// 从 package.json 读取版本号，避免硬编码不一致
+const pkgVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")).version;
+
 const program = new Command();
 
 program
   .name("publish-toolkit")
   .description("统一 npm 包发布工具链 — 混淆构建、包准备、一键发布")
-  .version("0.1.4");
+  .version(pkgVersion);
 
 // ===== publish 命令 =====
 
