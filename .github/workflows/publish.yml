@@ -43,6 +43,7 @@ jobs:
         run: |
           node --version
           npm --version
+          pnpm --version
 
       - name: Install dependencies
         run: npm install
@@ -61,14 +62,14 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             if [ "${{ inputs.dry_run }}" = "true" ]; then
               echo "🧪 Dry-run 模式..."
-              pnpm exec publish-toolkit publish --dry-run --registry=https://registry.npmjs.org/ --verbose
+              npm publish --dry-run --tag=${{ inputs.tag }}
             else
               echo "🚀 手动触发正式发布..."
-              pnpm exec publish-toolkit publish --registry=https://registry.npmjs.org/ --verbose
+              npm publish --tag=${{ inputs.tag }}
             fi
           else
             echo "🚀 Tag 触发自动发布: ${{ github.ref_name }}"
-            pnpm exec publish-toolkit publish --registry=https://registry.npmjs.org/ --verbose
+            npm publish --tag=latest
           fi
 
       - name: Display publish result
