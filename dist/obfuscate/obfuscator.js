@@ -27,8 +27,7 @@ const obfuscate = obfuscateModule;
  * 实际代码中使用字符串比较和正则实现上述匹配逻辑。
  */
 function matchExclude(relativePath, exclude) {
-    const normalized = relativePath.split(join(import.meta.dirname, ".")).join(".") || relativePath;
-    const normalizedSlash = normalized.replace(/\\/g, "/");
+    const normalizedSlash = relativePath.replace(/\\/g, "/");
     for (const pattern of exclude) {
         if (!pattern)
             continue;
@@ -180,6 +179,7 @@ function getObfuscatorOptions(level, sourceMap) {
  */
 export class Obfuscator {
     level;
+    static SUPPORTED_EXTENSIONS = new Set([".js", ".mjs", ".ts", ".cjs", ".d.ts", ".jsx", ".tsx"]);
     constructor(level = "light") {
         this.level = level;
     }
@@ -223,8 +223,6 @@ export class Obfuscator {
         let outputSize = 0;
         const errors = [];
         const fileDetails = [];
-        // 支持的文件扩展名
-        const SUPPORTED_EXTENSIONS = new Set([".js", ".mjs", ".ts", ".cjs", ".d.ts", ".jsx", ".tsx"]);
         const processDirectory = (dir) => {
             if (!existsSync(dir))
                 return;
@@ -241,15 +239,19 @@ export class Obfuscator {
                     // 递归处理子目录
                     processDirectory(fullPath);
                 }
-                else if (entry.isFile() && SUPPORTED_EXTENSIONS.has(ext)) {
+                else if (entry.isFile() && Obfuscator.SUPPORTED_EXTENSIONS.has(ext)) {
                     const startTime = Date.now();
                     try {
                         // 读取源文件
                         const sourceCode = readFileSync(fullPath, "utf-8");
                         const fileInputSize = Buffer.byteLength(sourceCode, "utf-8");
                         inputSize += fileInputSize;
-                        // 执行混淆
-                        const obfuscatedCode = obfuscate.obfuscate(sourceCode, obfuscatorOptions).getObfuscatedCode();
+                        // 执行混淆（source map 与混淆同时生成，避免重复计算）
+                        const obfuscatorOptionsWithSourceMap = sourceMap
+                            ? { ...obfuscatorOptions, sourceMap: true }
+                            : obfuscatorOptions;
+                        const obfuscationResult = obfuscate.obfuscate(sourceCode, obfuscatorOptionsWithSourceMap);
+                        const obfuscatedCode = obfuscationResult.getObfuscatedCode();
                         // 写入输出文件
                         const outputPath = join(outputDir, relativePath);
                         const outputFileDir = dirname(outputPath);
@@ -259,10 +261,9 @@ export class Obfuscator {
                         writeFileSync(outputPath, obfuscatedCode, "utf-8");
                         const fileOutputSize = Buffer.byteLength(obfuscatedCode, "utf-8");
                         outputSize += fileOutputSize;
-                        // 生成 source map（如果启用）
+                        // 写入 source map（如果启用）
                         if (sourceMap) {
-                            const sourceMapResult = obfuscate.obfuscate(sourceCode, { ...obfuscatorOptions, sourceMap: true });
-                            const sourceMap = sourceMapResult.getSourceMap();
+                            const sourceMap = obfuscationResult.getSourceMap();
                             if (sourceMap) {
                                 writeFileSync(`${outputPath}.map`, sourceMap, "utf-8");
                             }
@@ -343,7 +344,6 @@ export class Obfuscator {
         let inputSize = 0;
         let outputSize = 0;
         const fileDetails = [];
-        const SUPPORTED_EXTENSIONS = new Set([".js", ".mjs", ".ts", ".cjs", ".d.ts", ".jsx", ".tsx"]);
         const copyDirectory = (dir) => {
             if (!existsSync(dir))
                 return;
@@ -359,7 +359,7 @@ export class Obfuscator {
                 if (entry.isDirectory()) {
                     copyDirectory(fullPath);
                 }
-                else if (entry.isFile() && SUPPORTED_EXTENSIONS.has(ext)) {
+                else if (entry.isFile() && Obfuscator.SUPPORTED_EXTENSIONS.has(ext)) {
                     const startTime = Date.now();
                     try {
                         const content = readFileSync(fullPath, "utf-8");

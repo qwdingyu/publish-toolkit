@@ -54,6 +54,7 @@ export interface ObfuscateResult {
  */
 export declare class Obfuscator {
     private level;
+    private static readonly SUPPORTED_EXTENSIONS;
     constructor(level?: ObfuscateLevel);
     /**
      * 执行混淆

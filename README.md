@@ -8,44 +8,43 @@
 npm install -D @usethink/publish-toolkit
 ```
 
-> 推荐使用方式：`npx publish-toolkit ...` 或 `pnpm exec publish-toolkit ...`。
-> 在 pnpm 工作区中，优先使用 `pnpm exec`，避免 `npx` 被某些环境解析为 `npm run`。
+> 推荐使用方式：`pnpm exec publish-toolkit ...`。在 pnpm 工作区中，优先使用 `pnpm exec`，避免 `npx` 被某些环境解析为 `npm run`。仅在非 pnpm 环境退回到 `npx publish-toolkit ...`。
 
 ## 快速使用
 
 ### 发布包
 
 ```bash
-NPM_TOKEN=npm_xxx npx publish-toolkit publish --dry-run
+NPM_TOKEN=npm_xxx pnpm exec publish-toolkit publish --dry-run
 ```
 
 或
 
 ```bash
-NPM_TOKEN=npm_xxx pnpm exec publish-toolkit publish --dry-run
+NPM_TOKEN=npm_xxx npx publish-toolkit publish --dry-run
 ```
 
 ### 混淆构建产物
 
 ```bash
-npx publish-toolkit obfuscate run --input ./dist --output ./dist-obf --level light
+pnpm exec publish-toolkit obfuscate run --input ./dist --output ./dist-obf --level light
 ```
 
 或
 
 ```bash
-pnpm exec publish-toolkit obfuscate run --input ./dist --output ./dist-obf --level light
+npx publish-toolkit obfuscate run --input ./dist --output ./dist-obf --level light
 ```
 
 ## GitHub Actions 集成
 
 ```yaml
-- run: npx publish-toolkit publish
+- run: pnpm exec publish-toolkit publish
   env:
     NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
 
-> 本仓库自身的 CI 目前直接使用 `npm publish`，不走 toolkit CLI。对外消费项目推荐使用上述方式集成。
+> 本仓库自身的 CI 目前直接使用 `npm publish`，不走 toolkit CLI。对外消费项目推荐使用上述方式集成，并优先使用 `pnpm exec` 避免 `npx` 被某些环境解析为 `npm run`。
 
 ## 命令
 
