@@ -219,9 +219,27 @@ export class PublishToolkit {
       log("  prepack 脚本已定义（npm publish 自动执行），跳过手动构建");
       const step4 = startStep("构建", "prepack 已定义");
     } else if (pkg.scripts?.build) {
-      if (opts.verbose) log(`  执行构建: pnpm run build || npm run build`);
-      run("pnpm run build || npm run build", pkgDir, { verbose: opts.verbose });
-      const step4 = startStep("构建");
+      const npmBin = tryRun("which pnpm 2>/dev/null", pkgDir) ? "pnpm" : "npm";
+      if (opts.verbose) log(`  执行构建: ${npmBin} run build`);
+      try {
+        run(`${npmBin} run build`, pkgDir, { verbose: opts.verbose });
+        const step4 = startStep("构建");
+      } catch (err) {
+        // 如果 pnpm 失败，尝试 npm
+        if (npmBin === "pnpm") {
+          warn("  pnpm 构建失败，尝试 npm...");
+          try {
+            run("npm run build", pkgDir, { verbose: opts.verbose });
+            const step4 = startStep("构建");
+          } catch (err2) {
+            error(`构建失败: ${(err2 as Error).message}`);
+            return this.fail(pkgName, pkgVersion, "构建失败");
+          }
+        } else {
+          error(`构建失败: ${(err as Error).message}`);
+          return this.fail(pkgName, pkgVersion, "构建失败");
+        }
+      }
     } else {
       warn("  无 build 脚本，跳过构建");
     }
