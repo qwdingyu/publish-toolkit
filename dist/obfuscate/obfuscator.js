@@ -10,30 +10,71 @@
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join, relative, extname, dirname } from "node:path";
-import { obfuscate } from "javascript-obfuscator";
-// 简单 glob 匹配：仅支持 **/*.ext 与 *.ext 两类常见场景
+import obfuscateModule from "javascript-obfuscator";
+// javascript-obfuscator 的 ESM/CJS 类型声明不一致：运行时 default export 是函数，
+// 但类型文件把 obfuscate 声明为 named export。这里做运行时兼容，不改变行为。
+const obfuscate = obfuscateModule;
+/**
+ * 简单 glob 匹配：支持常见场景
+ *
+ * 支持的模式：
+ * - `*.ext`：匹配任意目录下的指定后缀文件
+ * - 任意深度子目录中的指定后缀文件
+ * - 指定目录下任意深度的指定后缀文件
+ * - 任意目录下的指定目录及其子目录
+ * - 包含指定文本的任意路径
+ *
+ * 实际代码中使用字符串比较和正则实现上述匹配逻辑。
+ */
 function matchExclude(relativePath, exclude) {
     const normalized = relativePath.split(join(import.meta.dirname, ".")).join(".") || relativePath;
+    const normalizedSlash = normalized.replace(/\\/g, "/");
     for (const pattern of exclude) {
         if (!pattern)
             continue;
-        if (pattern.startsWith("**/")) {
-            const suffix = pattern.slice(3);
-            if (normalized.endsWith(suffix))
-                return true;
-            if (normalized.includes(`/${suffix}`))
+        const patternSlash = pattern.replace(/\\/g, "/");
+        // **/*.ext 或 **/dir/**
+        if (patternSlash.startsWith("**/")) {
+            const suffix = patternSlash.slice(3);
+            // **/*.ext 匹配任意深度的指定后缀
+            if (suffix.startsWith("*.") || suffix.endsWith(".*")) {
+                const ext = suffix.startsWith("*.") ? suffix.slice(2) : suffix.slice(1);
+                if (normalizedSlash.endsWith(ext) || normalizedSlash.includes(`/${ext}`))
+                    return true;
+            }
+            // **/dir/** 匹配任意目录下的指定目录
+            else if (suffix.endsWith("/**")) {
+                const dir = suffix.slice(0, -2);
+                if (normalizedSlash.includes(`/${dir}/`) || normalizedSlash.startsWith(`${dir}/`))
+                    return true;
+            }
+            // **/*text* 匹配包含指定文本
+            else if (suffix.includes("*")) {
+                const regexStr = suffix.replace(/\*/g, ".*");
+                if (new RegExp(regexStr).test(normalizedSlash))
+                    return true;
+            }
+            // 普通后缀匹配
+            else {
+                if (normalizedSlash.endsWith(suffix) || normalizedSlash.includes(`/${suffix}`))
+                    return true;
+            }
+        }
+        // *.ext 匹配任意目录下的指定后缀
+        else if (patternSlash.startsWith("*.")) {
+            const ext = patternSlash.slice(2);
+            if (normalizedSlash.endsWith(ext) || normalizedSlash.includes(`/${ext}`))
                 return true;
         }
-        else if (pattern.startsWith("*.")) {
-            if (normalized.endsWith(pattern))
-                return true;
-            if (normalized.includes(`/${pattern}`))
+        // 包含文本匹配
+        else if (patternSlash.includes("*")) {
+            const regexStr = patternSlash.replace(/\*/g, ".*");
+            if (new RegExp(regexStr).test(normalizedSlash))
                 return true;
         }
+        // 精确路径匹配
         else {
-            if (normalized.endsWith(pattern))
-                return true;
-            if (normalized.includes(`/${pattern}`))
+            if (normalizedSlash === patternSlash || normalizedSlash.endsWith(patternSlash) || normalizedSlash.includes(`/${patternSlash}`))
                 return true;
         }
     }
@@ -172,7 +213,7 @@ export class Obfuscator {
         }
         // none 级别：直接复制，跳过混淆
         if (level === "none") {
-            return this.copyFiles(inputDir, outputDir, exclude);
+            return this.copyFiles(inputDir, outputDir, exclude, { report: options.report });
         }
         // 获取混淆配置，并合并用户自定义选项
         const obfuscatorOptions = { ...getObfuscatorOptions(level, sourceMap), ...options.options };
@@ -181,6 +222,9 @@ export class Obfuscator {
         let inputSize = 0;
         let outputSize = 0;
         const errors = [];
+        const fileDetails = [];
+        // 支持的文件扩展名
+        const SUPPORTED_EXTENSIONS = new Set([".js", ".mjs", ".ts", ".cjs", ".d.ts", ".jsx", ".tsx"]);
         const processDirectory = (dir) => {
             if (!existsSync(dir))
                 return;
@@ -197,13 +241,15 @@ export class Obfuscator {
                     // 递归处理子目录
                     processDirectory(fullPath);
                 }
-                else if (entry.isFile() && (ext === ".js" || ext === ".mjs" || ext === ".ts" || ext === ".cjs")) {
+                else if (entry.isFile() && SUPPORTED_EXTENSIONS.has(ext)) {
+                    const startTime = Date.now();
                     try {
                         // 读取源文件
                         const sourceCode = readFileSync(fullPath, "utf-8");
-                        inputSize += Buffer.byteLength(sourceCode, "utf-8");
+                        const fileInputSize = Buffer.byteLength(sourceCode, "utf-8");
+                        inputSize += fileInputSize;
                         // 执行混淆
-                        const obfuscatedCode = obfuscate(sourceCode, obfuscatorOptions).getObfuscatedCode();
+                        const obfuscatedCode = obfuscate.obfuscate(sourceCode, obfuscatorOptions).getObfuscatedCode();
                         // 写入输出文件
                         const outputPath = join(outputDir, relativePath);
                         const outputFileDir = dirname(outputPath);
@@ -211,19 +257,36 @@ export class Obfuscator {
                             mkdirSync(outputFileDir, { recursive: true });
                         }
                         writeFileSync(outputPath, obfuscatedCode, "utf-8");
-                        outputSize += Buffer.byteLength(obfuscatedCode, "utf-8");
+                        const fileOutputSize = Buffer.byteLength(obfuscatedCode, "utf-8");
+                        outputSize += fileOutputSize;
                         // 生成 source map（如果启用）
                         if (sourceMap) {
-                            const sourceMapResult = obfuscate(sourceCode, { ...obfuscatorOptions, sourceMap: true });
+                            const sourceMapResult = obfuscate.obfuscate(sourceCode, { ...obfuscatorOptions, sourceMap: true });
                             const sourceMap = sourceMapResult.getSourceMap();
                             if (sourceMap) {
                                 writeFileSync(`${outputPath}.map`, sourceMap, "utf-8");
                             }
                         }
                         processedFiles++;
+                        const duration = Date.now() - startTime;
+                        fileDetails.push({
+                            path: relativePath,
+                            inputSize: fileInputSize,
+                            outputSize: fileOutputSize,
+                            duration,
+                        });
                     }
                     catch (err) {
-                        errors.push(`${fullPath}: ${err.message}`);
+                        const errorMsg = `${fullPath}: ${err.message}`;
+                        errors.push(errorMsg);
+                        const duration = Date.now() - startTime;
+                        fileDetails.push({
+                            path: relativePath,
+                            inputSize: 0,
+                            outputSize: 0,
+                            duration,
+                            error: err.message,
+                        });
                     }
                 }
             }
@@ -233,28 +296,54 @@ export class Obfuscator {
             console.log(`[obfuscate] 已处理 ${processedFiles} 个文件`);
         }
         // 构建结果消息
-        let message = `混淆完成（level=${level}），处理 ${processedFiles} 个文件`;
+        const ratio = inputSize > 0 ? ((outputSize - inputSize) / inputSize * 100).toFixed(1) : "0.0";
+        let message = `混淆完成（level=${level}），处理 ${processedFiles} 个文件，体积变化 ${ratio}%`;
         if (errors.length > 0) {
             message += `，${errors.length} 个文件失败`;
             // 在开发/调试场景下把失败原因一并返回，方便定位问题
             message += `：${errors.join("；")}`;
         }
-        return {
+        const result = {
             success: errors.length === 0,
             processedFiles,
             outputDir,
             message,
             inputSize,
             outputSize,
+            files: fileDetails,
         };
+        // 生成报告（如果启用）
+        if (options.report) {
+            const reportPath = join(outputDir, "obfuscate-report.json");
+            const report = {
+                generatedAt: new Date().toISOString(),
+                level,
+                sourceMap,
+                exclude,
+                summary: {
+                    processedFiles,
+                    inputSize,
+                    outputSize,
+                    ratio: `${ratio}%`,
+                    errors: errors.length,
+                    success: result.success,
+                },
+                files: fileDetails,
+            };
+            writeFileSync(reportPath, JSON.stringify(report, null, 2), "utf-8");
+            result.reportPath = reportPath;
+        }
+        return result;
     }
     /**
      * 复制文件（用于 none 级别）
      */
-    copyFiles(inputDir, outputDir, exclude) {
+    copyFiles(inputDir, outputDir, exclude, options) {
         let processedFiles = 0;
         let inputSize = 0;
         let outputSize = 0;
+        const fileDetails = [];
+        const SUPPORTED_EXTENSIONS = new Set([".js", ".mjs", ".ts", ".cjs", ".d.ts", ".jsx", ".tsx"]);
         const copyDirectory = (dir) => {
             if (!existsSync(dir))
                 return;
@@ -262,6 +351,7 @@ export class Obfuscator {
             for (const entry of entries) {
                 const fullPath = join(dir, entry.name);
                 const relativePath = relative(inputDir, fullPath);
+                const ext = extname(fullPath);
                 // 跳过排除的文件
                 if (matchExclude(relativePath, exclude)) {
                     continue;
@@ -269,29 +359,75 @@ export class Obfuscator {
                 if (entry.isDirectory()) {
                     copyDirectory(fullPath);
                 }
-                else if (entry.isFile()) {
-                    const outputPath = join(outputDir, relativePath);
-                    const outputFileDir = dirname(outputPath);
-                    if (!existsSync(outputFileDir)) {
-                        mkdirSync(outputFileDir, { recursive: true });
+                else if (entry.isFile() && SUPPORTED_EXTENSIONS.has(ext)) {
+                    const startTime = Date.now();
+                    try {
+                        const content = readFileSync(fullPath, "utf-8");
+                        const fileInputSize = Buffer.byteLength(content, "utf-8");
+                        inputSize += fileInputSize;
+                        const outputPath = join(outputDir, relativePath);
+                        const outputFileDir = dirname(outputPath);
+                        if (!existsSync(outputFileDir)) {
+                            mkdirSync(outputFileDir, { recursive: true });
+                        }
+                        writeFileSync(outputPath, content, "utf-8");
+                        const fileOutputSize = Buffer.byteLength(content, "utf-8");
+                        outputSize += fileOutputSize;
+                        processedFiles++;
+                        const duration = Date.now() - startTime;
+                        fileDetails.push({
+                            path: relativePath,
+                            inputSize: fileInputSize,
+                            outputSize: fileOutputSize,
+                            duration,
+                        });
                     }
-                    const content = readFileSync(fullPath, "utf-8");
-                    inputSize += Buffer.byteLength(content, "utf-8");
-                    writeFileSync(outputPath, content, "utf-8");
-                    outputSize += Buffer.byteLength(content, "utf-8");
-                    processedFiles++;
+                    catch (err) {
+                        const duration = Date.now() - startTime;
+                        fileDetails.push({
+                            path: relativePath,
+                            inputSize: 0,
+                            outputSize: 0,
+                            duration,
+                            error: err.message,
+                        });
+                    }
                 }
             }
         };
         copyDirectory(inputDir);
-        return {
+        const ratio = inputSize > 0 ? ((outputSize - inputSize) / inputSize * 100).toFixed(1) : "0.0";
+        const result = {
             success: true,
             processedFiles,
             outputDir,
-            message: `none 级别：复制完成，处理 ${processedFiles} 个文件`,
+            message: `none 级别：复制完成，处理 ${processedFiles} 个文件，体积变化 ${ratio}%`,
             inputSize,
             outputSize,
+            files: fileDetails,
         };
+        // 生成报告（如果启用）
+        if (options?.report) {
+            const reportPath = join(outputDir, "obfuscate-report.json");
+            const report = {
+                generatedAt: new Date().toISOString(),
+                level: "none",
+                sourceMap: false,
+                exclude,
+                summary: {
+                    processedFiles,
+                    inputSize,
+                    outputSize,
+                    ratio: `${ratio}%`,
+                    errors: 0,
+                    success: true,
+                },
+                files: fileDetails,
+            };
+            writeFileSync(reportPath, JSON.stringify(report, null, 2), "utf-8");
+            result.reportPath = reportPath;
+        }
+        return result;
     }
 }
 //# sourceMappingURL=obfuscator.js.map

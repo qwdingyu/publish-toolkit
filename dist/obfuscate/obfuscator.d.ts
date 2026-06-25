@@ -11,7 +11,7 @@
 import type { ObfuscatorOptions } from "javascript-obfuscator";
 export type ObfuscateLevel = "none" | "light" | "medium" | "aggressive";
 export interface ObfuscateOptions {
-    /** 输入目录（包含待混淆的 .js/.mjs 文件） */
+    /** 输入目录（包含待混淆的 .js/.mjs/.ts 文件） */
     inputDir: string;
     /** 输出目录（混淆后文件写入位置） */
     outputDir: string;
@@ -19,10 +19,12 @@ export interface ObfuscateOptions {
     level?: ObfuscateLevel;
     /** 是否保留 source map */
     sourceMap?: boolean;
-    /** 排除的文件glob模式（简单实现，仅支持后缀） */
+    /** 排除的文件glob模式（支持常见场景） */
     exclude?: string[];
     /** 覆盖默认混淆器选项 */
     options?: Partial<ObfuscatorOptions>;
+    /** 是否生成混淆报告（JSON 格式） */
+    report?: boolean;
 }
 export interface ObfuscateResult {
     success: boolean;
@@ -31,6 +33,16 @@ export interface ObfuscateResult {
     message: string;
     inputSize: number;
     outputSize: number;
+    /** 混淆报告路径（如果生成） */
+    reportPath?: string;
+    /** 每个文件的处理详情 */
+    files?: Array<{
+        path: string;
+        inputSize: number;
+        outputSize: number;
+        duration: number;
+        error?: string;
+    }>;
 }
 /**
  * 默认混淆器实现，基于 javascript-obfuscator。

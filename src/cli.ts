@@ -39,10 +39,13 @@ program
   .option("--no-version-check", "跳过版本号已发布检查")
   .option("--verbose, -v", "详细日志")
   .action(async (options) => {
-    const npmToken = process.env.NPM_TOKEN;
-    if (!npmToken) {
+    const npmToken = process.env.NPM_TOKEN || "";
+    if (!options.dryRun && !npmToken) {
       console.error("错误: 缺少环境变量 NPM_TOKEN");
       process.exit(1);
+    }
+    if (!npmToken) {
+      console.warn("⚠️  NPM_TOKEN 未设置（dry-run 模式可继续）");
     }
 
     const toolkit = new PublishToolkit({

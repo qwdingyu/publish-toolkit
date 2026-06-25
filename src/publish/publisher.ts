@@ -143,11 +143,15 @@ export class PublishToolkit {
     // ---- Step 1: 验证 ----
     log("Step 1: 验证参数");
 
-    if (!npmToken) {
+    if (!opts.dryRun && !npmToken) {
       error("缺少环境变量 NPM_TOKEN");
       return this.fail("", "", "缺少 NPM_TOKEN");
     }
-    log("  ✓ NPM_TOKEN 已设置");
+    if (npmToken) {
+      log("  ✓ NPM_TOKEN 已设置");
+    } else {
+      warn("  NPM_TOKEN 未设置（dry-run 模式可继续）");
+    }
 
     if (!existsSync(pkgDir)) {
       error(`包目录不存在: ${pkgDir}`);
