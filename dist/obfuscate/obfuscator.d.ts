@@ -8,6 +8,7 @@
  *   2. 零侵入：输入输出均为文件路径，不修改项目源码结构
  *   3. 可配置：支持 source map、排除规则、自定义选项
  */
+import type { ObfuscatorOptions } from "javascript-obfuscator";
 export type ObfuscateLevel = "none" | "light" | "medium" | "aggressive";
 export interface ObfuscateOptions {
     /** 输入目录（包含待混淆的 .js/.mjs 文件） */
@@ -20,12 +21,16 @@ export interface ObfuscateOptions {
     sourceMap?: boolean;
     /** 排除的文件glob模式（简单实现，仅支持后缀） */
     exclude?: string[];
+    /** 覆盖默认混淆器选项 */
+    options?: Partial<ObfuscatorOptions>;
 }
 export interface ObfuscateResult {
     success: boolean;
     processedFiles: number;
     outputDir: string;
     message: string;
+    inputSize: number;
+    outputSize: number;
 }
 /**
  * 默认混淆器实现，基于 javascript-obfuscator。
