@@ -8,6 +8,9 @@
 npm install -D @usethink/publish-toolkit
 ```
 
+> 推荐使用方式：`npx publish-toolkit ...` 或 `pnpm exec publish-toolkit ...`。
+> 在 pnpm 工作区中，优先使用 `pnpm exec`，避免 `npx` 被某些环境解析为 `npm run`。
+
 ## 快速使用
 
 ### 发布包
@@ -16,10 +19,22 @@ npm install -D @usethink/publish-toolkit
 NPM_TOKEN=npm_xxx npx publish-toolkit publish --dry-run
 ```
 
+或
+
+```bash
+NPM_TOKEN=npm_xxx pnpm exec publish-toolkit publish --dry-run
+```
+
 ### 混淆构建产物
 
 ```bash
-npx publish-toolkit obfuscate --input ./dist --output ./dist-obf --level light
+npx publish-toolkit obfuscate run --input ./dist --output ./dist-obf --level light
+```
+
+或
+
+```bash
+pnpm exec publish-toolkit obfuscate run --input ./dist --output ./dist-obf --level light
 ```
 
 ## GitHub Actions 集成
@@ -29,6 +44,8 @@ npx publish-toolkit obfuscate --input ./dist --output ./dist-obf --level light
   env:
     NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
+
+> 本仓库自身的 CI 目前直接使用 `npm publish`，不走 toolkit CLI。对外消费项目推荐使用上述方式集成。
 
 ## 命令
 
@@ -50,14 +67,23 @@ npx publish-toolkit obfuscate --input ./dist --output ./dist-obf --level light
 
 ### obfuscate
 
-对构建产物进行混淆（占位实现，后续接入真实混淆器）。
+对构建产物进行混淆。
 
 | 选项 | 说明 | 默认值 |
 |------|------|--------|
 | `--input <dir>` | 输入目录 | - |
 | `--output <dir>` | 输出目录 | - |
-| `--level <name>` | 混淆级别 | light |
+| `--level <name>` | 混淆级别：none / light / medium / aggressive | light |
 | `--source-map` | 保留 source map | false |
+| `-e, --exclude <pattern>` | 排除文件 glob（可多次指定） | - |
+| `--config <path>` | 混淆器自定义配置 JSON 文件路径 | - |
+| `--report` | 生成混淆报告（obfuscate-report.json） | false |
+
+#### 子命令
+
+- `run` — 执行混淆（默认）
+- `list-levels` — 列出所有可用级别
+- `info` — 显示混淆器配置信息
 
 ## License
 

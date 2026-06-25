@@ -1,6 +1,6 @@
 {
   "name": "@usethink/publish-toolkit",
-  "version": "0.1.6",
+  "version": "0.1.8",
   "description": "统一 npm 包发布工具链 — 混淆构建、包准备、一键发布",
   "type": "module",
   "main": "dist/index.js",
@@ -12,6 +12,15 @@
     "dist",
     "README.md"
   ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"

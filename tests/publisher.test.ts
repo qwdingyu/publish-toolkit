@@ -18,9 +18,7 @@ describe("PublishToolkit", () => {
     expect(toolkit).toBeDefined();
   });
 
-  it("dry-run 模式下应该返回成功结果（模拟）", async () => {
-    // 注意：此测试需要真实的 package.json 环境
-    // 此处仅验证接口存在
+  it("dry-run 模式下缺少 NPM_TOKEN 应该继续并返回成功", async () => {
     const toolkit = new PublishToolkit({
       packageDir: process.cwd(),
       dryRun: true,
@@ -28,9 +26,24 @@ describe("PublishToolkit", () => {
       skipVersionCheck: true,
     });
 
-    // 由于缺少 NPM_TOKEN，会先失败
     const result = await toolkit.publish("");
-    expect(result.success).toBe(false);
-    expect(result.message).toContain("NPM_TOKEN");
+    expect(result.success).toBe(true);
+    expect(result.dryRun).toBe(true);
+    expect(result.message).toContain("Dry-run 成功");
+  });
+
+  it("dry-run 模式下提供 NPM_TOKEN 且跳过检查应该返回成功", async () => {
+    const toolkit = new PublishToolkit({
+      packageDir: process.cwd(),
+      dryRun: true,
+      skipGitCheck: true,
+      skipVersionCheck: true,
+      verbose: false,
+    });
+
+    const result = await toolkit.publish("npm_test_token_xxx");
+    expect(result.success).toBe(true);
+    expect(result.dryRun).toBe(true);
+    expect(result.message).toContain("Dry-run 成功");
   });
 });

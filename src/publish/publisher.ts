@@ -53,7 +53,19 @@ export interface PublishResult {
 
 // ===== 工具函数 =====
 
-function run(cmd: string, cwd: string, opts?: { verbose?: boolean; timeout?: number }) {
+interface RunOptions {
+  verbose?: boolean;
+  timeout?: number;
+}
+
+interface CommandResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  code: number | null;
+}
+
+function run(cmd: string, cwd: string, opts?: RunOptions): string {
   const options = { cwd, encoding: "utf-8" as const, timeout: 30_000, ...opts };
   if (opts?.verbose) console.log(`  $ ${cmd}`);
   try {
@@ -62,16 +74,21 @@ function run(cmd: string, cwd: string, opts?: { verbose?: boolean; timeout?: num
     if (opts?.verbose && out) console.log(`  => ${out}`);
     return out;
   } catch (err) {
-    const stderr = ((err as Error & { stderr?: Buffer; stdout?: Buffer }).stderr ||
-      (err as Error & { stderr?: Buffer; stdout?: Buffer }).stdout ||
-      "").toString().trim();
-    throw new Error(stderr || `Command failed: ${cmd}`);
+    const execErr = err as Error & { status?: number; stderr?: Buffer; stdout?: Buffer };
+    const stderr = (execErr.stderr || execErr.stdout || Buffer.from("")).toString("utf-8").trim();
+    throw new Error(stderr || `Command failed: ${cmd} (exit ${execErr.status ?? 1})`);
   }
 }
 
-function tryRun(cmd: string, cwd: string) {
-  try { return run(cmd, cwd); }
-  catch { return ""; }
+function tryRun(cmd: string, cwd: string, opts?: RunOptions): CommandResult {
+  try {
+    const stdout = run(cmd, cwd, opts);
+    return { success: true, stdout, stderr: "", code: 0 };
+  } catch (err) {
+    const execErr = err as Error & { status?: number; stderr?: Buffer; stdout?: Buffer };
+    const stderr = (execErr.stderr || execErr.stdout || Buffer.from("")).toString("utf-8").trim();
+    return { success: false, stdout: "", stderr, code: execErr.status ?? 1 };
+  }
 }
 
 function registryHost(registry: string): string {
@@ -81,6 +98,14 @@ function registryHost(registry: string): string {
   } catch {
     return "//registry.npmjs.org";
   }
+}
+
+function detectPnpm(cwd: string): boolean {
+  // 跨平台检测 pnpm：Unix 用 which/command -v，Windows 用 where
+  const isWin = process.platform === "win32";
+  const cmd = isWin ? "where pnpm" : "command -v pnpm";
+  const result = tryRun(cmd, cwd);
+  return result.success && result.stdout.trim().length > 0;
 }
 
 const log = (msg: string) => console.log(`[publish] ${msg}`);
@@ -164,7 +189,18 @@ export class PublishToolkit {
       return this.fail("", "", "未找到 package.json");
     }
 
-    const pkg = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
+    let pkg: {
+      name: string;
+      version: string;
+      private?: boolean;
+      scripts?: Record<string, string>;
+    };
+    try {
+      pkg = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
+    } catch (err) {
+      error(`package.json 解析失败: ${(err as Error).message}`);
+      return this.fail("", "", "package.json 格式错误");
+    }
     if (pkg.private === true) {
       error(`包 "${pkg.name}" 的 "private" 为 true，无法发布`);
       return this.fail("", "", "包为 private，无法发布");
@@ -175,21 +211,22 @@ export class PublishToolkit {
     log(`  包名: ${pkgName}`);
     log(`  版本: ${pkgVersion}`);
     log(`  registry: ${opts.registry}`);
-    const step1 = startStep("验证参数");
+    startStep("验证参数").done();
 
     // ---- Step 2: git 检查 ----
     if (!opts.skipGitCheck) {
       log("Step 2: 检查 git");
-      const gitRoot = tryRun("git rev-parse --show-toplevel 2>/dev/null", pkgDir);
+      const gitRootResult = tryRun("git rev-parse --show-toplevel 2>/dev/null", pkgDir);
+      const gitRoot = gitRootResult.success ? gitRootResult.stdout : "";
       if (gitRoot) {
-        const status = tryRun(`git -C "${gitRoot}" status --porcelain`, pkgDir);
-        if (status) {
+        const statusResult = tryRun(`git -C "${gitRoot}" status --porcelain`, pkgDir);
+        if (statusResult.success && statusResult.stdout) {
           error("工作区有未提交的变更:");
-          console.error(status);
+          console.error(statusResult.stdout);
           return this.fail(pkgName, pkgVersion, "工作区有未提交的变更");
         }
       }
-      const step2 = startStep("git 检查");
+      startStep("git 检查").done(`git root: ${gitRoot || "(非 git 仓库，已跳过)"}`);
       if (opts.verbose) log(`  git root: ${gitRoot || "(非 git 仓库，已跳过)"}`);
     } else {
       warn("Step 2: 已跳过 git 检查（--no-git-check）");
@@ -198,17 +235,25 @@ export class PublishToolkit {
     // ---- Step 3: 版本检查 ----
     if (!opts.skipVersionCheck) {
       log("Step 3: 检查版本是否已发布");
-      const published = tryRun(
+      // 为网络请求设置更长超时，避免 CI 网络抖动导致误判
+      const publishedResult = tryRun(
         `npm view ${pkgName} version --registry=${opts.registry} 2>/dev/null || true`,
-        pkgDir
+        pkgDir,
+        { timeout: 60_000 }
       );
-      const latestVer = published.split("\n").pop()?.trim();
+      const latestVer = publishedResult.success ? publishedResult.stdout.split("\n").pop()?.trim() : undefined;
       if (latestVer === pkgVersion) {
         error(`版本 ${pkgVersion} 已存在！请先 bump 版本号`);
         return this.fail(pkgName, pkgVersion, "版本已存在");
       }
-      const step3 = startStep("版本检查", latestVer ? `registry 最新: ${latestVer}` : "首次发布");
-      if (opts.verbose) log(`  npm view 输出: ${published || "(空)"}`);
+      startStep("版本检查", latestVer ? `registry 最新: ${latestVer}` : "首次发布").done();
+      if (opts.verbose) {
+        if (!publishedResult.success) {
+          log(`  npm view 失败: ${publishedResult.stderr || "未知错误"}（当作首次发布处理）`);
+        } else {
+          log(`  npm view 输出: ${publishedResult.stdout || "(空)"}`);
+        }
+      }
     } else {
       warn("Step 3: 已跳过版本检查（--no-version-check）");
     }
@@ -217,27 +262,34 @@ export class PublishToolkit {
     log("Step 4: 构建");
     if (pkg.scripts?.prepack) {
       log("  prepack 脚本已定义（npm publish 自动执行），跳过手动构建");
-      const step4 = startStep("构建", "prepack 已定义");
+      startStep("构建", "prepack 已定义").done();
     } else if (pkg.scripts?.build) {
-      const npmBin = tryRun("which pnpm 2>/dev/null", pkgDir) ? "pnpm" : "npm";
-      if (opts.verbose) log(`  执行构建: ${npmBin} run build`);
-      try {
-        run(`${npmBin} run build`, pkgDir, { verbose: opts.verbose });
-        const step4 = startStep("构建");
-      } catch (err) {
-        // 如果 pnpm 失败，尝试 npm
-        if (npmBin === "pnpm") {
-          warn("  pnpm 构建失败，尝试 npm...");
-          try {
-            run("npm run build", pkgDir, { verbose: opts.verbose });
-            const step4 = startStep("构建");
-          } catch (err2) {
-            error(`构建失败: ${(err2 as Error).message}`);
-            return this.fail(pkgName, pkgVersion, "构建失败");
+      const npmBin = detectPnpm(pkgDir) ? "pnpm" : "npm";
+      if (opts.dryRun) {
+        log(`  [dry-run] 将执行构建: ${npmBin} run build`);
+        startStep("构建", "dry-run 跳过").done();
+      } else {
+        if (opts.verbose) log(`  执行构建: ${npmBin} run build`);
+        try {
+          run(`${npmBin} run build`, pkgDir, { verbose: opts.verbose });
+          startStep("构建").done();
+        } catch (err) {
+          // 如果 pnpm 失败，尝试 npm
+          if (npmBin === "pnpm") {
+            const pnpmErr = (err as Error).message;
+            warn(`  pnpm 构建失败: ${pnpmErr}，尝试 npm...`);
+            try {
+              run("npm run build", pkgDir, { verbose: opts.verbose });
+              startStep("构建").done();
+            } catch (err2) {
+              const npmErr = (err2 as Error).message;
+              error(`构建失败: ${npmErr}`);
+              return this.fail(pkgName, pkgVersion, `构建失败: ${npmErr}`);
+            }
+          } else {
+            error(`构建失败: ${(err as Error).message}`);
+            return this.fail(pkgName, pkgVersion, `构建失败: ${(err as Error).message}`);
           }
-        } else {
-          error(`构建失败: ${(err as Error).message}`);
-          return this.fail(pkgName, pkgVersion, "构建失败");
         }
       }
     } else {
@@ -246,28 +298,35 @@ export class PublishToolkit {
 
     // ---- Step 5: .npmrc ----
     log("Step 5: 配置认证");
-    const rcPath = resolve(pkgDir, ".npmrc");
-    _rcPath = rcPath;
-    _rcBackup = existsSync(rcPath) ? readFileSync(rcPath, "utf-8") : null;
-    writeFileSync(
-      rcPath,
-      [
-        `registry=${opts.registry}`,
-        `${registryHost(opts.registry)}/:_authToken=${npmToken}`,
-      ].join("\n") + "\n",
-      "utf-8"
-    );
-    const step5 = startStep(".npmrc 配置");
-    if (opts.verbose) log(`  写入: ${rcPath}`);
+    if (!opts.dryRun) {
+      const rcPath = resolve(pkgDir, ".npmrc");
+      _rcPath = rcPath;
+      _rcBackup = existsSync(rcPath) ? readFileSync(rcPath, "utf-8") : null;
+      writeFileSync(
+        rcPath,
+        [
+          `registry=${opts.registry}`,
+          `${registryHost(opts.registry)}/:_authToken=${npmToken}`,
+        ].join("\n") + "\n",
+        "utf-8"
+      );
+      startStep(".npmrc 配置").done();
+      if (opts.verbose) log(`  写入: ${rcPath}`);
 
-    // 注册清理钩子
-    process.on("exit", cleanupNpmrc);
-    process.on("SIGINT", () => { warn("收到 SIGINT，清理中..."); cleanupNpmrc(); process.exit(130); });
-    process.on("SIGTERM", () => { warn("收到 SIGTERM，清理中..."); cleanupNpmrc(); process.exit(143); });
+      // 注册清理钩子
+      process.on("exit", cleanupNpmrc);
+      process.on("SIGINT", () => { warn("收到 SIGINT，清理中..."); cleanupNpmrc(); process.exit(130); });
+      process.on("SIGTERM", () => { warn("收到 SIGTERM，清理中..."); cleanupNpmrc(); process.exit(143); });
+    } else {
+      log(`  [dry-run] 将写入 .npmrc 到: ${pkgDir}`);
+      log(`  [dry-run] registry: ${opts.registry}`);
+      log(`  [dry-run] 认证: ${npmToken ? "***（已隐藏）" : "未设置"}`);
+      startStep(".npmrc 配置", "dry-run 跳过").done();
+    }
 
     // ---- Step 6: 发布 ----
     log("Step 6: 发布");
-    const npmBin = tryRun("which pnpm 2>/dev/null", pkgDir) ? "pnpm" : "npm";
+    const npmBin = detectPnpm(pkgDir) ? "pnpm" : "npm";
     const pubArgs = [
       "publish",
       `--registry=${opts.registry}`,

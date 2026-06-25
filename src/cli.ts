@@ -17,6 +17,16 @@ import { readFileSync } from "node:fs";
 import { PublishToolkit } from "./publish/publisher.js";
 import { Obfuscator, ObfuscateLevel, ObfuscateOptions } from "./obfuscate/obfuscator.js";
 
+interface ObfuscateRunOptions {
+  input: string;
+  output: string;
+  level: ObfuscateLevel;
+  sourceMap: boolean;
+  exclude: string[];
+  config?: string;
+  report: boolean;
+}
+
 // 从 package.json 读取版本号，避免硬编码不一致
 const pkgVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")).version;
 
@@ -85,7 +95,7 @@ obfuscateCmd
   .option("-e, --exclude <pattern>", "排除文件（支持简单 glob，可多次指定）", [] as string[])
   .option("--config <path>", "混淆器自定义配置 JSON 文件路径")
   .option("--report", "生成混淆报告（obfuscate-report.json）")
-  .action(async (options: any) => {
+  .action(async (options: ObfuscateRunOptions) => {
     const level = options.level as ObfuscateLevel;
     const obfuscator = new Obfuscator(level);
 
