@@ -1,13 +1,12 @@
 /**
- * @usethink/publish-toolkit — 混淆引擎接口
+ * @usethink/publish-toolkit — 混淆引擎
  *
- * 当前 node-backend-core 中无混淆逻辑，此处先定义接口与占位实现。
- * 后续接入项目（如含前端产物或 JS 库的项目）可替换为真实混淆器。
+ * 基于 javascript-obfuscator 实现，支持多级混淆策略。
  *
  * 设计目标：
- *   1. 支持多级混淆策略（light / medium / aggressive）
+ *   1. 支持多级混淆策略（none / light / medium / aggressive）
  *   2. 零侵入：输入输出均为文件路径，不修改项目源码结构
- *   3. 可插拔：通过 register() 替换默认实现
+ *   3. 可配置：支持 source map、排除规则、自定义选项
  */
 export type ObfuscateLevel = "none" | "light" | "medium" | "aggressive";
 export interface ObfuscateOptions {
@@ -19,7 +18,7 @@ export interface ObfuscateOptions {
     level?: ObfuscateLevel;
     /** 是否保留 source map */
     sourceMap?: boolean;
-    /** 排除的文件glob模式 */
+    /** 排除的文件glob模式（简单实现，仅支持后缀） */
     exclude?: string[];
 }
 export interface ObfuscateResult {
@@ -29,14 +28,30 @@ export interface ObfuscateResult {
     message: string;
 }
 /**
- * 默认混淆器实现。
+ * 默认混淆器实现，基于 javascript-obfuscator。
  *
- * 当前为文件复制占位逻辑，不做实际混淆。
- * 接入真实混淆器（如 javascript-obfuscator）时，替换此函数体即可。
+ * 使用场景：
+ *   - 对构建产物（dist/）进行混淆，保护代码逻辑
+ *   - 支持 CI/CD 流水线集成
+ *   - 不修改源码，仅处理输出文件
  */
 export declare class Obfuscator {
     private level;
     constructor(level?: ObfuscateLevel);
+    /**
+     * 执行混淆
+     *
+     * 处理流程：
+     *   1. 验证输入输出目录
+     *   2. 递归扫描输入目录中的 .js/.mjs/.ts 文件
+     *   3. 根据级别选择混淆策略
+     *   4. 写入输出目录，保持相对路径结构
+     *   5. 返回处理结果统计
+     */
     obfuscate(options: ObfuscateOptions): Promise<ObfuscateResult>;
+    /**
+     * 复制文件（用于 none 级别）
+     */
+    private copyFiles;
 }
 //# sourceMappingURL=obfuscator.d.ts.map
