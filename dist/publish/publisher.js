@@ -11,18 +11,29 @@
  *
  * 对应原 scripts/publish-package.mjs 的核心逻辑。
  */
-import { execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-function run(cmd, cwd, opts) {
+export function isPackageManager(value) {
+    return value === "npm" || value === "pnpm" || value === "auto";
+}
+function formatCommand(bin, args) {
+    return [bin, ...args].join(" ");
+}
+function run(bin, args, cwd, opts) {
     const options = { cwd, encoding: "utf-8", timeout: 30_000, ...opts };
     if (opts?.verbose)
-        console.log(`  $ ${cmd}`);
+        console.log(`  $ ${formatCommand(bin, args)}`);
     try {
-        const stdout = execSync(cmd, { ...options, stdio: "pipe" });
+        const stdout = execFileSync(bin, args, {
+            ...options,
+            stdio: "pipe",
+            env: { ...process.env, ...opts?.env },
+        });
         const out = (stdout || "").toString().trim();
         if (opts?.verbose && out)
             console.log(`  => ${out}`);
@@ -31,18 +42,16 @@ function run(cmd, cwd, opts) {
     catch (err) {
         const execErr = err;
         const stderr = (execErr.stderr || execErr.stdout || Buffer.from("")).toString("utf-8").trim();
-        throw new Error(stderr || `Command failed: ${cmd} (exit ${execErr.status ?? 1})`);
+        throw new Error(stderr || `Command failed: ${formatCommand(bin, args)} (exit ${execErr.status ?? 1})`);
     }
 }
-function tryRun(cmd, cwd, opts) {
+function tryRun(bin, args, cwd, opts) {
     try {
-        const stdout = run(cmd, cwd, opts);
+        const stdout = run(bin, args, cwd, opts);
         return { success: true, stdout, stderr: "", code: 0 };
     }
     catch (err) {
-        const execErr = err;
-        const stderr = (execErr.stderr || execErr.stdout || Buffer.from("")).toString("utf-8").trim();
-        return { success: false, stdout: "", stderr, code: execErr.status ?? 1 };
+        return { success: false, stdout: "", stderr: err.message, code: 1 };
     }
 }
 function registryHost(registry) {
@@ -70,22 +79,24 @@ const log = (msg) => console.log(`[publish] ${msg}`);
 const warn = (msg) => console.warn(`[publish ⚠️] ${msg}`);
 const error = (msg) => console.error(`[publish ❌] ${msg}`);
 // ===== .npmrc 安全管理 =====
-let _rcPath = null;
-let _rcBackup = null;
+let _rcDir = null;
 function cleanupNpmrc() {
-    if (!_rcPath)
+    if (!_rcDir)
         return;
     try {
-        unlinkSync(_rcPath);
+        rmSync(_rcDir, { recursive: true, force: true });
     }
     catch { }
-    if (_rcBackup !== null)
-        writeFileSync(_rcPath, _rcBackup, "utf-8");
+    _rcDir = null;
 }
 // ===== 发布引擎 =====
 export class PublishToolkit {
     options;
     constructor(options = {}) {
+        const packageManager = options.packageManager ?? "npm";
+        if (!isPackageManager(packageManager)) {
+            throw new TypeError(`无效 packageManager: ${packageManager}`);
+        }
         this.options = {
             packageDir: options.packageDir ?? process.cwd(),
             registry: options.registry ?? "https://registry.npmjs.org/",
@@ -96,7 +107,7 @@ export class PublishToolkit {
             skipGitCheck: options.skipGitCheck ?? false,
             skipVersionCheck: options.skipVersionCheck ?? false,
             verbose: options.verbose ?? false,
-            packageManager: options.packageManager ?? "npm",
+            packageManager,
         };
     }
     async publish(npmToken) {
@@ -164,10 +175,10 @@ export class PublishToolkit {
         // ---- Step 2: git 检查 ----
         if (!opts.skipGitCheck) {
             log("Step 2: 检查 git");
-            const gitRootResult = tryRun("git rev-parse --show-toplevel 2>/dev/null", pkgDir);
+            const gitRootResult = tryRun("git", ["rev-parse", "--show-toplevel"], pkgDir);
             const gitRoot = gitRootResult.success ? gitRootResult.stdout : "";
             if (gitRoot) {
-                const statusResult = tryRun(`git -C "${gitRoot}" status --porcelain`, pkgDir);
+                const statusResult = tryRun("git", ["-C", gitRoot, "status", "--porcelain"], pkgDir);
                 if (statusResult.success && statusResult.stdout) {
                     error("工作区有未提交的变更:");
                     console.error(statusResult.stdout);
@@ -185,16 +196,20 @@ export class PublishToolkit {
         if (!opts.skipVersionCheck) {
             log("Step 3: 检查版本是否已发布");
             // 为网络请求设置更长超时，避免 CI 网络抖动导致误判
-            const publishedResult = tryRun(`npm view ${pkgName} version --registry=${opts.registry} 2>/dev/null || true`, pkgDir, { timeout: 60_000 });
-            const latestVer = publishedResult.success ? publishedResult.stdout.split("\n").pop()?.trim() : undefined;
-            if (latestVer === pkgVersion) {
+            const publishedResult = tryRun("npm", ["view", `${pkgName}@${pkgVersion}`, "version", `--registry=${opts.registry}`], pkgDir, { timeout: 60_000 });
+            const publishedVersion = publishedResult.success ? publishedResult.stdout.split("\n").pop()?.trim() : undefined;
+            if (publishedVersion === pkgVersion) {
                 error(`版本 ${pkgVersion} 已存在！请先 bump 版本号`);
                 return this.fail(pkgName, pkgVersion, "版本已存在");
             }
-            startStep("版本检查", latestVer ? `registry 最新: ${latestVer}` : "首次发布").done();
+            if (!publishedResult.success && !publishedResult.stderr.includes("E404") && !publishedResult.stderr.includes("404")) {
+                error(`版本检查失败: ${publishedResult.stderr || "未知错误"}`);
+                return this.fail(pkgName, pkgVersion, "版本检查失败");
+            }
+            startStep("版本检查", publishedVersion ? `registry 已存在: ${publishedVersion}` : "该版本未发布").done();
             if (opts.verbose) {
                 if (!publishedResult.success) {
-                    log(`  npm view 失败: ${publishedResult.stderr || "未知错误"}（当作首次发布处理）`);
+                    log(`  npm view 输出: ${publishedResult.stderr || "(空)"}`);
                 }
                 else {
                     log(`  npm view 输出: ${publishedResult.stdout || "(空)"}`);
@@ -220,7 +235,7 @@ export class PublishToolkit {
                 if (opts.verbose)
                     log(`  执行构建: ${npmBin} run build`);
                 try {
-                    run(`${npmBin} run build`, pkgDir, { verbose: opts.verbose });
+                    run(npmBin, ["run", "build"], pkgDir, { verbose: opts.verbose });
                     startStep("构建").done();
                 }
                 catch (err) {
@@ -229,7 +244,7 @@ export class PublishToolkit {
                         const pnpmErr = err.message;
                         warn(`  pnpm 构建失败: ${pnpmErr}，尝试 npm...`);
                         try {
-                            run("npm run build", pkgDir, { verbose: opts.verbose });
+                            run("npm", ["run", "build"], pkgDir, { verbose: opts.verbose });
                             startStep("构建").done();
                         }
                         catch (err2) {
@@ -250,24 +265,26 @@ export class PublishToolkit {
         }
         // ---- Step 5: .npmrc ----
         log("Step 5: 配置认证");
+        let publishEnv;
         if (!opts.dryRun) {
-            const rcPath = resolve(pkgDir, ".npmrc");
-            _rcPath = rcPath;
-            _rcBackup = existsSync(rcPath) ? readFileSync(rcPath, "utf-8") : null;
+            const rcDir = mkdtempSync(join(tmpdir(), "publish-toolkit-"));
+            const rcPath = join(rcDir, ".npmrc");
+            _rcDir = rcDir;
             writeFileSync(rcPath, [
                 `registry=${opts.registry}`,
                 `${registryHost(opts.registry)}/:_authToken=${npmToken}`,
             ].join("\n") + "\n", "utf-8");
-            startStep(".npmrc 配置").done();
+            publishEnv = { NPM_CONFIG_USERCONFIG: rcPath };
+            startStep(".npmrc 配置").done("临时 userconfig");
             if (opts.verbose)
-                log(`  写入: ${rcPath}`);
+                log(`  写入临时 userconfig: ${rcPath}`);
             // 注册清理钩子
             process.on("exit", cleanupNpmrc);
             process.on("SIGINT", () => { warn("收到 SIGINT，清理中..."); cleanupNpmrc(); process.exit(130); });
             process.on("SIGTERM", () => { warn("收到 SIGTERM，清理中..."); cleanupNpmrc(); process.exit(143); });
         }
         else {
-            log(`  [dry-run] 将写入 .npmrc 到: ${pkgDir}`);
+            log("  [dry-run] 将写入临时 npm userconfig");
             log(`  [dry-run] registry: ${opts.registry}`);
             log(`  [dry-run] 认证: ${npmToken ? "***（已隐藏）" : "未设置"}`);
             startStep(".npmrc 配置", "dry-run 跳过").done();
@@ -302,7 +319,7 @@ export class PublishToolkit {
         }
         if (!opts.dryRun) {
             try {
-                run(`${npmBin} ${pubArgs.join(" ")}`, pkgDir, { verbose: opts.verbose });
+                run(npmBin, pubArgs, pkgDir, { verbose: opts.verbose, env: publishEnv });
                 log(`  ✓ 发布成功！${pkgName}@${pkgVersion}`);
                 console.log(`     https://www.npmjs.com/package/${pkgName}`);
             }

@@ -41,6 +41,7 @@ export interface PublishResult {
     message: string;
 }
 export type PackageManager = "npm" | "pnpm" | "auto";
+export declare function isPackageManager(value: string): value is PackageManager;
 export declare class PublishToolkit {
     private options;
     constructor(options?: PublishOptions);

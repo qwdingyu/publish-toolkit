@@ -50,6 +50,12 @@ describe("PublishToolkit", () => {
     expect(toolkit).toBeDefined();
   });
 
+  it("应该拒绝无效 packageManager", () => {
+    expect(() => new PublishToolkit({
+      packageManager: "yarn" as never,
+    })).toThrow("无效 packageManager");
+  });
+
   it("dry-run 模式下缺少 NPM_TOKEN 应该继续并返回成功", async () => {
     const toolkit = new PublishToolkit({
       packageDir: process.cwd(),

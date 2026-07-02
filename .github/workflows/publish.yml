@@ -19,6 +19,10 @@ concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   publish:
     name: Build & Publish
@@ -45,7 +49,7 @@ jobs:
           npm --version
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Type check
         run: npm run type-check
@@ -78,14 +82,14 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             if [ "${{ inputs.dry_run }}" = "true" ]; then
               echo "🧪 Dry-run 模式..."
-              npm publish --dry-run --tag=${{ inputs.tag }}
+              npm publish --dry-run --tag=${{ inputs.tag }} --provenance
             else
               echo "🚀 手动触发正式发布..."
-              npm publish --tag=${{ inputs.tag }}
+              npm publish --tag=${{ inputs.tag }} --provenance
             fi
           else
             echo "🚀 Tag 触发自动发布: ${{ github.ref_name }}"
-            npm publish --tag=latest
+            npm publish --tag=latest --provenance
           fi
 
       - name: Display publish result

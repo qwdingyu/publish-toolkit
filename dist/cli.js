@@ -12,7 +12,7 @@
  */
 import { Command } from "commander";
 import { readFileSync } from "node:fs";
-import { PublishToolkit } from "./publish/publisher.js";
+import { isPackageManager, PublishToolkit } from "./publish/publisher.js";
 import { Obfuscator } from "./obfuscate/obfuscator.js";
 // 从 package.json 读取版本号，避免硬编码不一致
 const pkgVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")).version;
@@ -36,6 +36,10 @@ program
     .option("--no-version-check", "跳过版本号已发布检查")
     .option("--verbose, -v", "详细日志")
     .action(async (options) => {
+    if (!isPackageManager(options.packageManager)) {
+        console.error(`错误: --package-manager 只能是 npm、pnpm 或 auto，当前值: ${options.packageManager}`);
+        process.exit(1);
+    }
     const npmToken = process.env.NPM_TOKEN || "";
     if (!options.dryRun && !npmToken) {
         console.error("错误: 缺少环境变量 NPM_TOKEN");

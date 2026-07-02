@@ -1,7 +1,8 @@
 {
   "name": "@usethink/publish-toolkit",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "统一 npm 包发布工具链 — 混淆构建、包准备、一键发布",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,6 +22,14 @@
     "./package.json": "./package.json"
   },
   "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qwdingyu/publish-toolkit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/qwdingyu/publish-toolkit/issues"
+  },
+  "homepage": "https://github.com/qwdingyu/publish-toolkit#readme",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
