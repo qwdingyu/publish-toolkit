@@ -56,7 +56,24 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Check published version
+        id: published
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          echo "package_name=${PACKAGE_NAME}" >> $GITHUB_OUTPUT
+          echo "package_version=${PACKAGE_VERSION}" >> $GITHUB_OUTPUT
+
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "ℹ️ ${PACKAGE_NAME}@${PACKAGE_VERSION} 已存在，跳过发布。"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "✅ ${PACKAGE_NAME}@${PACKAGE_VERSION} 尚未发布，可以继续。"
+          fi
+
       - name: Publish to npm
+        if: steps.published.outputs.exists != 'true'
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             if [ "${{ inputs.dry_run }}" = "true" ]; then
@@ -74,7 +91,11 @@ jobs:
       - name: Display publish result
         if: success()
         run: |
-          PACKAGE_NAME=$(node -p "require('./package.json').name")
-          PACKAGE_VERSION=$(node -p "require('./package.json').version")
-          echo "✅ ${PACKAGE_NAME}@${PACKAGE_VERSION} 发布成功！"
+          PACKAGE_NAME="${{ steps.published.outputs.package_name }}"
+          PACKAGE_VERSION="${{ steps.published.outputs.package_version }}"
+          if [ "${{ steps.published.outputs.exists }}" = "true" ]; then
+            echo "ℹ️ ${PACKAGE_NAME}@${PACKAGE_VERSION} 已存在，本次跳过发布。"
+          else
+            echo "✅ ${PACKAGE_NAME}@${PACKAGE_VERSION} 发布成功！"
+          fi
           echo "   查看: https://www.npmjs.com/package/${PACKAGE_NAME}"
