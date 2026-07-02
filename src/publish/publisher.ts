@@ -41,6 +41,8 @@ export interface PublishOptions {
   skipVersionCheck?: boolean;
   /** 详细日志 */
   verbose?: boolean;
+  /** 发布命令使用的包管理器。默认 npm；auto 只按项目元数据判断，不按全局命令是否存在判断。 */
+  packageManager?: PackageManager;
 }
 
 export interface PublishResult {
@@ -52,6 +54,8 @@ export interface PublishResult {
 }
 
 // ===== 工具函数 =====
+
+export type PackageManager = "npm" | "pnpm" | "auto";
 
 interface RunOptions {
   verbose?: boolean;
@@ -100,12 +104,24 @@ function registryHost(registry: string): string {
   }
 }
 
-function detectPnpm(cwd: string): boolean {
-  // 跨平台检测 pnpm：Unix 用 which/command -v，Windows 用 where
-  const isWin = process.platform === "win32";
-  const cmd = isWin ? "where pnpm" : "command -v pnpm";
-  const result = tryRun(cmd, cwd);
-  return result.success && result.stdout.trim().length > 0;
+function resolvePackageManager(
+  pkgDir: string,
+  pkg: { packageManager?: string },
+  configured: PackageManager
+): { bin: "npm" | "pnpm"; reason: string } {
+  if (configured === "npm" || configured === "pnpm") {
+    return { bin: configured, reason: "显式配置" };
+  }
+
+  if (pkg.packageManager?.startsWith("pnpm@")) {
+    return { bin: "pnpm", reason: "package.json packageManager" };
+  }
+
+  if (existsSync(resolve(pkgDir, "pnpm-lock.yaml")) && !existsSync(resolve(pkgDir, "package-lock.json"))) {
+    return { bin: "pnpm", reason: "pnpm-lock.yaml" };
+  }
+
+  return { bin: "npm", reason: "auto 默认" };
 }
 
 const log = (msg: string) => console.log(`[publish] ${msg}`);
@@ -139,6 +155,7 @@ export class PublishToolkit {
       skipGitCheck: options.skipGitCheck ?? false,
       skipVersionCheck: options.skipVersionCheck ?? false,
       verbose: options.verbose ?? false,
+      packageManager: options.packageManager ?? "npm",
     };
   }
 
@@ -194,6 +211,7 @@ export class PublishToolkit {
       version: string;
       private?: boolean;
       scripts?: Record<string, string>;
+      packageManager?: string;
     };
     try {
       pkg = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
@@ -208,9 +226,11 @@ export class PublishToolkit {
 
     const pkgName = pkg.name;
     const pkgVersion = pkg.version;
+    const packageManager = resolvePackageManager(pkgDir, pkg, opts.packageManager);
     log(`  包名: ${pkgName}`);
     log(`  版本: ${pkgVersion}`);
     log(`  registry: ${opts.registry}`);
+    log(`  包管理器: ${packageManager.bin}（${packageManager.reason}）`);
     startStep("验证参数").done();
 
     // ---- Step 2: git 检查 ----
@@ -264,7 +284,7 @@ export class PublishToolkit {
       log("  prepack 脚本已定义（npm publish 自动执行），跳过手动构建");
       startStep("构建", "prepack 已定义").done();
     } else if (pkg.scripts?.build) {
-      const npmBin = detectPnpm(pkgDir) ? "pnpm" : "npm";
+      const npmBin = packageManager.bin;
       if (opts.dryRun) {
         log(`  [dry-run] 将执行构建: ${npmBin} run build`);
         startStep("构建", "dry-run 跳过").done();
@@ -326,7 +346,7 @@ export class PublishToolkit {
 
     // ---- Step 6: 发布 ----
     log("Step 6: 发布");
-    const npmBin = detectPnpm(pkgDir) ? "pnpm" : "npm";
+    const npmBin = packageManager.bin;
     const pubArgs = [
       "publish",
       `--registry=${opts.registry}`,

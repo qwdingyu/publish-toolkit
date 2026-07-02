@@ -30,6 +30,8 @@ export interface PublishOptions {
     skipVersionCheck?: boolean;
     /** 详细日志 */
     verbose?: boolean;
+    /** 发布命令使用的包管理器。默认 npm；auto 只按项目元数据判断，不按全局命令是否存在判断。 */
+    packageManager?: PackageManager;
 }
 export interface PublishResult {
     success: boolean;
@@ -38,6 +40,7 @@ export interface PublishResult {
     dryRun: boolean;
     message: string;
 }
+export type PackageManager = "npm" | "pnpm" | "auto";
 export declare class PublishToolkit {
     private options;
     constructor(options?: PublishOptions);

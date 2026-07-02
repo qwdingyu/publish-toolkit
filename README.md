@@ -8,20 +8,20 @@
 npm install -D @usethink/publish-toolkit
 ```
 
-> 推荐使用方式：`pnpm exec publish-toolkit ...`。在 pnpm 工作区中，优先使用 `pnpm exec`，避免 `npx` 被某些环境解析为 `npm run`。仅在非 pnpm 环境退回到 `npx publish-toolkit ...`。
+> 发布命令默认使用 `npm publish`。在 pnpm 工作区里可以用 `pnpm exec publish-toolkit ...` 启动 CLI，但 CLI 内部仍默认执行 npm；只有显式传入 `--package-manager pnpm` 或 `--package-manager auto` 且项目元数据声明 pnpm 时，才会执行 `pnpm publish`。
 
 ## 快速使用
 
 ### 发布包
 
 ```bash
-NPM_TOKEN=npm_xxx pnpm exec publish-toolkit publish --dry-run
+NPM_TOKEN=npm_xxx npx publish-toolkit publish --dry-run
 ```
 
 或
 
 ```bash
-NPM_TOKEN=npm_xxx npx publish-toolkit publish --dry-run
+NPM_TOKEN=npm_xxx pnpm exec publish-toolkit publish --dry-run
 ```
 
 ### 混淆构建产物
@@ -36,15 +36,37 @@ pnpm exec publish-toolkit obfuscate run --input ./dist --output ./dist-obf --lev
 npx publish-toolkit obfuscate run --input ./dist --output ./dist-obf --level light
 ```
 
+## 本地发布脚本
+
+项目内置 `scripts/publish-to-npmjs.sh`，用于本地或 CI 中将 `@usethink/publish-toolkit` 本身发布到 npmjs。
+
+```bash
+# 预览模式（不实际发布）
+bash ./scripts/publish-to-npmjs.sh --dry-run
+
+# 正式发布到 latest
+NPM_TOKEN=npm_xxx bash ./scripts/publish-to-npmjs.sh --tag latest
+
+# 发布到 beta tag
+NPM_TOKEN=npm_xxx bash ./scripts/publish-to-npmjs.sh --tag beta
+```
+
+脚本会自动检查：
+- 项目根目录和包信息
+- `dist/` 构建产物是否存在
+- `NPM_TOKEN` 环境变量（非 dry-run 模式必需）
+
 ## GitHub Actions 集成
 
 ```yaml
-- run: pnpm exec publish-toolkit publish
+- run: npx publish-toolkit publish
   env:
     NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
 
-> 本仓库自身的 CI 目前直接使用 `npm publish`，不走 toolkit CLI。对外消费项目推荐使用上述方式集成，并优先使用 `pnpm exec` 避免 `npx` 被某些环境解析为 `npm run`。
+pnpm 项目也可以用 `pnpm exec` 启动 CLI，但不要混淆“CLI 启动方式”和“发布命令包管理器”。默认发布命令仍是 npm。
+
+> 本仓库自身的 CI 目前直接使用 `npm publish`，不走 toolkit CLI。
 
 ## 命令
 
@@ -60,9 +82,12 @@ npx publish-toolkit obfuscate run --input ./dist --output ./dist-obf --level lig
 | `--tag <name>` | dist-tag | latest |
 | `--otp <code>` | OTP 二次验证码 | - |
 | `--access <level>` | 发布访问级别 | public |
+| `--package-manager <name>` | 发布命令包管理器：npm / pnpm / auto | npm |
 | `--no-git-check` | 跳过 git 检查 | false |
 | `--no-version-check` | 跳过版本号检查 | false |
 | `--verbose, -v` | 详细日志 | false |
+
+`--package-manager auto` 只读取项目元数据：`package.json` 的 `packageManager: "pnpm@..."` 或仅存在 `pnpm-lock.yaml` 时选择 pnpm；不会因为 runner 全局安装了 pnpm 就自动切换。
 
 ### obfuscate
 

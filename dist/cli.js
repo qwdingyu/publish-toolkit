@@ -31,6 +31,7 @@ program
     .option("--tag <name>", "dist-tag", "latest")
     .option("--otp <code>", "OTP 二次验证码")
     .option("--access <level>", "发布访问级别", "public")
+    .option("--package-manager <name>", "发布命令使用的包管理器: npm | pnpm | auto", "npm")
     .option("--no-git-check", "跳过 git 检查")
     .option("--no-version-check", "跳过版本号已发布检查")
     .option("--verbose, -v", "详细日志")
@@ -50,6 +51,7 @@ program
         tag: options.tag,
         otp: options.otp,
         access: options.access,
+        packageManager: options.packageManager,
         skipGitCheck: options.gitCheck === false,
         skipVersionCheck: options.versionCheck === false,
         verbose: options.verbose,
